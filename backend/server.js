@@ -1,5 +1,5 @@
 // ============================================
-// CREDENTIALS LOADING (LOCAL R-DRIVE + CLOUD SAFE)
+// CREDENTIALS & DEPENDENCIES
 // ============================================
 const express = require('express');
 const mongoose = require('mongoose');
@@ -14,55 +14,58 @@ const { OpenAI } = require('openai');
 const fs = require('fs');
 require('dotenv').config();
 
-// Since server.js is in R:\confessly\backend, 
-// we go up ONE level to R:\confessly, then into credentials.
 const localCredentialsPath = path.join(__dirname, '../credentials/master-credentials.js');
-
 let CRED;
 
 if (fs.existsSync(localCredentialsPath)) {
     CRED = require(localCredentialsPath);
-    console.log("🔐 LOCAL: Credentials loaded successfully from:", localCredentialsPath);
-    console.log("✅ Using local credentials from R-Drive");
+    console.log("🔐 LOCAL: Credentials loaded from R-Drive");
 } else {
     console.log("☁️  CLOUD: Falling back to Environment Variables");
-    // Fallback to environment variables
     CRED = {
         DATABASE: { MONGODB_URI: process.env.MONGODB_URI },
-        JWT: { SECRET: process.env.JWT_SECRET },
+        JWT: { SECRET: process.env.JWT_SECRET || 'fallback_secret_change_me' },
         SERVER: { PORT: process.env.PORT || 5000 },
-        SOCKET: { CORS_ORIGINS: ["*"] }, 
+        // Fixed: We use origin: true in middleware instead of a hardcoded list here
         CLOUDINARY: {
             CLOUD_NAME: process.env.CLOUDINARY_CLOUD_NAME,
             API_KEY: process.env.CLOUDINARY_API_KEY,
             API_SECRET: process.env.CLOUDINARY_API_SECRET
         },
         OPENAI: { API_KEY: process.env.OPENAI_API_KEY },
-        FEATURES: { ENABLE_MODERATION: true }
+        FEATURES: { ENABLE_MODERATION: !!process.env.OPENAI_API_KEY }
     };
-    console.log("✅ Using environment variables for credentials");
 }
 
 const app = express();
 const server = http.createServer(app);
 const PORT = process.env.PORT || CRED.SERVER.PORT;
 
-// Middleware
-app.use(cors({ origin: CRED.SOCKET.CORS_ORIGINS, credentials: true }));
+// ============================================
+// MIDDLEWARE (CORS FIX)
+// ============================================
+app.use(cors({ 
+    origin: true, // Automatically matches the requesting origin (Vercel)
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS']
+}));
 app.use(express.json());
 
 // Services Initialization
-cloudinary.config({ 
-    cloud_name: CRED.CLOUDINARY.CLOUD_NAME, 
-    api_key: CRED.CLOUDINARY.API_KEY, 
-    api_secret: CRED.CLOUDINARY.API_SECRET 
-});
-const openai = new OpenAI({ apiKey: CRED.OPENAI.API_KEY });
+if (CRED.CLOUDINARY.CLOUD_NAME) {
+    cloudinary.config({ 
+        cloud_name: CRED.CLOUDINARY.CLOUD_NAME, 
+        api_key: CRED.CLOUDINARY.API_KEY, 
+        api_secret: CRED.CLOUDINARY.API_SECRET 
+    });
+}
+
+const openai = CRED.OPENAI.API_KEY ? new OpenAI({ apiKey: CRED.OPENAI.API_KEY }) : null;
 
 // ============================================
 // DATABASE MODELS
 // ============================================
-const User = mongoose.model('User', new mongoose.Schema({
+const User = mongoose.models.User || mongoose.model('User', new mongoose.Schema({
     username: { type: String, required: true, unique: true },
     password: { type: String, required: true },
     gender: String,
@@ -71,16 +74,16 @@ const User = mongoose.model('User', new mongoose.Schema({
     level: { type: Number, default: 1 }
 }));
 
-const Confession = mongoose.model('Confession', new mongoose.Schema({
+const Confession = mongoose.models.Confession || mongoose.model('Confession', new mongoose.Schema({
     authorName: String,
     authorRarity: String,
-    content: String,
+    content: { type: String, required: true },
     categories: [String],
     createdAt: { type: Date, default: Date.now }
 }));
 
 // ============================================
-// SOCKET.IO LOGIC
+// SOCKET.IO
 // ============================================
 const io = new Server(server, { cors: { origin: "*" } });
 io.on('connection', (socket) => {
@@ -92,7 +95,12 @@ io.on('connection', (socket) => {
 // API ROUTES
 // ============================================
 
-// Auth: Signup
+// 1. Health Check (Test this first!)
+app.get('/api/health', (req, res) => {
+    res.json({ status: 'online', database: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected' });
+});
+
+// 2. Auth: Signup
 app.post('/api/auth/signup', async (req, res) => {
     try {
         const { username, password, gender } = req.body;
@@ -104,29 +112,39 @@ app.post('/api/auth/signup', async (req, res) => {
         await newUser.save();
         const token = jwt.sign({ id: newUser._id }, CRED.JWT.SECRET, { expiresIn: '7d' });
         res.status(201).json({ user: newUser, token });
-    } catch (err) { res.status(400).json({ error: "User already exists" }); }
+    } catch (err) { 
+        res.status(400).json({ error: "User already exists or missing data" }); 
+    }
 });
 
-// Auth: Login
+// 3. Auth: Login
 app.post('/api/auth/login', async (req, res) => {
-    const { username, password } = req.body;
-    const user = await User.findOne({ username });
-    if (!user || !(await bcrypt.compare(password, user.password))) return res.status(401).json({ error: "Invalid credentials" });
-    const token = jwt.sign({ id: user._id }, CRED.JWT.SECRET, { expiresIn: '7d' });
-    res.json({ user, token });
+    try {
+        const { username, password } = req.body;
+        const user = await User.findOne({ username });
+        if (!user || !(await bcrypt.compare(password, user.password))) {
+            return res.status(401).json({ error: "Invalid credentials" });
+        }
+        const token = jwt.sign({ id: user._id }, CRED.JWT.SECRET, { expiresIn: '7d' });
+        res.json({ user, token });
+    } catch (err) {
+        res.status(500).json({ error: "Login error" });
+    }
 });
 
-// Confessions: Post (With OpenAI Moderation & XP)
+// 4. Confessions: Post
 app.post('/api/confessions', async (req, res) => {
     try {
         const { content, categories, userId } = req.body;
 
-        if (CRED.FEATURES.ENABLE_MODERATION) {
+        if (CRED.FEATURES.ENABLE_MODERATION && openai) {
             const mod = await openai.moderations.create({ input: content });
             if (mod.results[0].flagged) return res.status(400).json({ error: "Harmful content detected." });
         }
 
         const user = await User.findById(userId);
+        if (!user) return res.status(404).json({ error: "User not found" });
+
         const newPost = new Confession({
             authorName: user.anonymousName.full,
             authorRarity: user.anonymousName.creatureRarity,
@@ -135,25 +153,35 @@ app.post('/api/confessions', async (req, res) => {
 
         await newPost.save();
         
-        // Reward user with XP
         user.xp += 20;
         if (user.xp >= 100) { user.level += 1; user.xp = 0; }
         await user.save();
 
         io.emit('new_confession', newPost);
         res.json({ post: newPost, user });
-    } catch (err) { res.status(500).json({ error: "Failed to post confession" }); }
+    } catch (err) { 
+        res.status(500).json({ error: "Failed to post confession" }); 
+    }
 });
 
-// Confessions: Get Feed
+// 5. Confessions: Get Feed
 app.get('/api/confessions', async (req, res) => {
-    const list = await Confession.find().sort({ createdAt: -1 }).limit(50);
-    res.json(list);
+    try {
+        const list = await Confession.find().sort({ createdAt: -1 }).limit(50);
+        res.json(list);
+    } catch (err) {
+        res.status(500).json({ error: "Failed to fetch feed" });
+    }
 });
 
 // ============================================
 // LAUNCH
 // ============================================
+if (!CRED.DATABASE.MONGODB_URI) {
+    console.error("❌ ERROR: MONGODB_URI is missing!");
+    process.exit(1);
+}
+
 mongoose.connect(CRED.DATABASE.MONGODB_URI)
     .then(() => {
         console.log("🔋 Database Connected to Atlas");
