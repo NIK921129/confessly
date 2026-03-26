@@ -1,0 +1,123 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ============================================
+   GLOBAL RESET & ROOT SETUP
+   ============================================ */
+:root {
+  --primary-purple: #7c3aed;
+  --secondary-pink: #db2777;
+  --bg-black: #050505;
+  --card-bg: rgba(15, 15, 15, 0.7);
+  --border-glass: rgba(255, 255, 255, 0.08);
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  background-color: var(--bg-black);
+  color: #ffffff;
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  overflow-x: hidden;
+}
+
+#root {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ============================================
+   ANIMATIONS
+   ============================================ */
+
+/* Legendary Pulse Glow for Rare Cards */
+@keyframes pulse-glow {
+  0%, 100% {
+    box-shadow: 0 0 10px rgba(255, 0, 255, 0.3), 0 0 20px rgba(124, 58, 237, 0.2);
+    border-color: rgba(255, 0, 255, 0.4);
+  }
+  50% {
+    box-shadow: 0 0 25px rgba(255, 0, 255, 0.6), 0 0 40px rgba(124, 58, 237, 0.4);
+    border-color: rgba(255, 0, 255, 0.9);
+  }
+}
+
+.animate-pulse-glow {
+  animation: pulse-glow 3s ease-in-out infinite;
+}
+
+/* Slow Fade Reveal for the Secrets */
+@keyframes slow-fade {
+  from {
+    opacity: 0;
+    filter: blur(15px);
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    filter: blur(0);
+    transform: translateY(0);
+  }
+}
+
+.slow-fade-reveal {
+  animation: slow-fade 1s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+}
+
+/* ============================================
+   UI COMPONENTS & UTILITIES
+   ============================================ */
+
+/* Glassmorphism Card Style */
+.glass {
+  background: var(--card-bg);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid var(--border-glass);
+  box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.6);
+}
+
+/* Navbar specific glass */
+.glass-nav {
+  background: rgba(0, 0, 0, 0.85);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border-bottom: 1px solid var(--border-glass);
+}
+
+/* Initial state of the secret before reveal */
+.secret-blur {
+  filter: blur(30px);
+  opacity: 0.15;
+  user-select: none;
+  pointer-events: none;
+}
+
+/* ============================================
+   CUSTOM SCROLLBAR
+   ============================================ */
+::-webkit-scrollbar {
+  width: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: #0a0a0a;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #333;
+  border-radius: 10px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--primary-purple);
+}
+
+/* Fix for potential white flash on mobile */
+html {
+  background-color: var(--bg-black);
+}
