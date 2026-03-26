@@ -26,6 +26,8 @@ import {
   BrowserRouter, Routes, Route, Link, Navigate,
   useNavigate, useLocation,
 } from "react-router-dom";
+// Add this near your constants if it's missing
+const var_ = (name) => `var(${name})`;
 
 // ─────────────────────────────────────────────────────────────────
 // §1  CONFIG & CONSTANTS
