@@ -30,7 +30,7 @@ import {
 // ─────────────────────────────────────────────────────────────────
 // §1  CONFIG & CONSTANTS
 // ─────────────────────────────────────────────────────────────────
-const API_URL = import.meta?.env?.VITE_API_URL || "https://api.whispervault.app";
+const API_URL = import.meta?.env?.VITE_API_URL || "https://confessly-api.onrender.com";
 const CLOUDINARY_CLOUD_NAME  = "dm82jxjfk";
 const CLOUDINARY_UPLOAD_PRESET = "whispervault_audio";
 
