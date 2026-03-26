@@ -48,15 +48,33 @@ def deploy():
     # Step 2: Backend Deployment (Render via Git)
     print("\n📡 Step 2: Pushing Backend Updates to GitHub...")
     curr_time = time.strftime("%Y-%m-%d %H:%M:%S")
-    git_cmds = [
-        "git add .",
-        f'git commit -m "Deployment Update: {curr_time}"',
-        "git push origin main"
-    ]
-    for cmd in git_cmds:
-        if not run_ps_command(cmd):
-            print(f"❌ Git command failed: {cmd}")
+    
+    # Run git add
+    if not run_ps_command("git add ."):
+        print("❌ Git add failed")
+        sys.exit(1)
+    
+    # Try to commit, but don't fail if there's nothing new
+    print("🚀 Running: git commit")
+    commit_result = subprocess.run(
+        ["powershell", "-Command", f'git commit -m "Deployment Update: {curr_time}"'],
+        capture_output=True, 
+        text=True,
+        encoding="utf-8",
+        errors="replace"
+    )
+    
+    # If it fails with "nothing to commit", we just ignore it and move to push
+    if "nothing to commit" in commit_result.stdout or commit_result.returncode == 0:
+        print("  [LOG]: Nothing new to commit or commit successful. Proceeding to push...")
+        
+        # Push with force to ensure any previous failed pushes are resolved
+        if not run_ps_command("git push origin main --force"):
+            print("❌ Git push failed")
             sys.exit(1)
+    else:
+        print(f"❌ Actual Git Error: {commit_result.stderr}")
+        sys.exit(1)
 
     # Step 3: Frontend Deployment (Vercel)
     print("\n🎨 Step 3: Deploying Frontend to Vercel...")
