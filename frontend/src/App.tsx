@@ -4,7 +4,7 @@ import { BrowserRouter, Routes, Route, Link, Navigate, useNavigate, useLocation 
 // ============================================
 // CONFIG & CONSTANTS
 // ============================================
-const API_URL = "https://confessly-api.onrender.com";
+const API_URL = import.meta.env.VITE_API_URL || "https://confessly-api.onrender.com";
 
 export type Rarity = 'common' | 'uncommon' | 'rare' | 'legendary';
 
@@ -46,7 +46,7 @@ export const RARITY_GLOW: Record<Rarity, string> = {
 };
 
 // ============================================
-// AUTH CONTEXT (Improved with loading states)
+// AUTH CONTEXT
 // ============================================
 interface AuthContextType {
   user: User | null;
@@ -71,7 +71,6 @@ const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => 
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
-    // Load user from localStorage on mount
     const savedUser = localStorage.getItem('confessly_user');
     const savedToken = localStorage.getItem('confessly_token');
     if (savedUser && savedToken) {
@@ -138,7 +137,7 @@ const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => 
 };
 
 // ============================================
-// LOADING SPINNER COMPONENT
+// LOADING SPINNER
 // ============================================
 const LoadingSpinner: React.FC = () => (
   <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50">
@@ -150,7 +149,7 @@ const LoadingSpinner: React.FC = () => (
 );
 
 // ============================================
-// PROTECTED ROUTE (With redirect)
+// PROTECTED ROUTE
 // ============================================
 const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { isAuthenticated, isLoading } = useAuth();
@@ -166,7 +165,7 @@ const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) =
 };
 
 // ============================================
-// CONFESSION CARD (Improved)
+// CONFESSION CARD
 // ============================================
 const ConfessionCard: React.FC<{ confession: Confession }> = ({ confession }) => {
   const [isRevealed, setIsRevealed] = useState(false);
@@ -181,7 +180,6 @@ const ConfessionCard: React.FC<{ confession: Confession }> = ({ confession }) =>
 
   return (
     <div className={`glass rounded-2xl p-6 mb-5 transition-all duration-300 hover:scale-[1.01] hover:border-purple-500/50 ${glowClass}`}>
-      {/* Author Section */}
       <div className="flex items-center justify-between mb-4">
         <div className="flex items-center gap-3">
           <div 
@@ -209,12 +207,10 @@ const ConfessionCard: React.FC<{ confession: Confession }> = ({ confession }) =>
         </div>
       </div>
 
-      {/* Content Section */}
       <div className={`mb-5 transition-all duration-700 ${!isRevealed ? 'blur-xl opacity-20 select-none' : 'blur-0 opacity-100'}`}>
         <p className="text-gray-200 leading-relaxed text-base">{confession.content}</p>
       </div>
 
-      {/* Action Buttons */}
       {!isRevealed ? (
         <button
           onClick={() => setIsRevealed(true)}
@@ -242,7 +238,7 @@ const ConfessionCard: React.FC<{ confession: Confession }> = ({ confession }) =>
 };
 
 // ============================================
-// HOME PAGE (Feed)
+// HOME PAGE
 // ============================================
 const HomePage: React.FC = () => {
   const [confessions, setConfessions] = useState<Confession[]>([]);
@@ -268,7 +264,6 @@ const HomePage: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-[#050505]">
-      {/* Navigation */}
       <nav className="glass-nav sticky top-0 z-50 px-4 md:px-6 py-3 flex justify-between items-center">
         <Link to="/" className="text-2xl md:text-3xl font-black tracking-tighter bg-gradient-to-r from-purple-400 to-pink-600 bg-clip-text text-transparent">
           CONFESSLY
@@ -307,7 +302,6 @@ const HomePage: React.FC = () => {
         </div>
       </nav>
 
-      {/* Feed Content */}
       <main className="max-w-2xl mx-auto px-4 py-6 pb-20">
         {loading ? (
           <div className="flex flex-col items-center justify-center py-20">
@@ -345,44 +339,64 @@ const HomePage: React.FC = () => {
 };
 
 // ============================================
-// CREATE PAGE
+// CREATE PAGE (FIXED)
 // ============================================
 const CreatePage: React.FC = () => {
   const [content, setContent] = useState('');
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
   const { user } = useAuth();
   const nav = useNavigate();
 
   const handlePost = async () => {
     if (!content.trim()) {
-      alert('Please write something before posting');
+      setError('Please write something before posting');
       return;
     }
-    if (content.length < 10) {
-      alert('Your confession must be at least 10 characters');
+    if (content.length < 5) {
+      setError('Your confession must be at least 5 characters');
       return;
     }
     
+    setError('');
     setLoading(true);
+    
+    // Debug check
+    if (!user?._id) {
+      setError('Session expired. Please log in again.');
+      setLoading(false);
+      return;
+    }
+    
+    console.log('Posting confession:', {
+      content: content.trim(),
+      userId: user._id,
+      username: user.username
+    });
+    
     try {
       const res = await fetch(`${API_URL}/api/confessions`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
           content: content.trim(), 
-          userId: user?._id, 
+          userId: user._id, 
           categories: ['General'] 
         })
       });
       
+      const data = await res.json();
+      console.log('Response:', data);
+      
       if (res.ok) {
+        console.log('Success! Redirecting...');
         nav('/');
       } else {
-        const data = await res.json();
-        alert(data.error || 'Failed to post. Please try again.');
+        setError(data.error || `Failed to post (Status: ${res.status})`);
       }
     } catch (err) {
-      alert('Network error. Please check your connection.');
+      console.error('Network error:', err);
+      setError('Network error. Please check your connection.');
     } finally {
       setLoading(false);
     }
@@ -407,10 +421,16 @@ const CreatePage: React.FC = () => {
           </button>
         </div>
         
+        {error && (
+          <div className="mb-4 p-3 bg-red-500/10 border border-red-500/20 rounded-xl text-red-400 text-sm text-center">
+            {error}
+          </div>
+        )}
+        
         <div className="glass rounded-2xl p-6">
           <textarea
             className="w-full bg-transparent border-0 text-white text-lg outline-none resize-none min-h-[300px] placeholder:text-gray-600"
-            placeholder="What's on your mind? 👻\n\nYour secret is safe here. Confessions are completely anonymous."
+            placeholder="What's on your mind? 👻\n\nYour secret is safe here. Confessions are completely anonymous.\n\nMinimum 5 characters."
             value={content}
             onChange={(e) => setContent(e.target.value)}
             maxLength={1000}
@@ -557,7 +577,7 @@ const SignupPage: React.FC = () => {
         
         <input
           className="w-full bg-white/5 border border-white/10 rounded-xl p-4 mb-4 text-white outline-none focus:border-purple-500 transition"
-          placeholder="Username"
+          placeholder="Username (min. 3 characters)"
           onChange={(e) => setForm({ ...form, username: e.target.value })}
           required
           disabled={loading}
@@ -609,7 +629,7 @@ const SignupPage: React.FC = () => {
 };
 
 // ============================================
-// PROFILE PAGE (Placeholder - Ready for expansion)
+// PROFILE PAGE
 // ============================================
 const ProfilePage: React.FC = () => {
   const { user } = useAuth();
