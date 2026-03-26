@@ -1,71 +1,124 @@
 import React, { useState, useEffect, createContext, useContext } from 'react';
-import { BrowserRouter, Routes, Route, Link, Navigate, useNavigate } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Link, Navigate, useNavigate, useLocation } from 'react-router-dom';
 
 // ============================================
 // CONFIG & CONSTANTS
 // ============================================
-const API_URL = "https://confessly-api.onrender.com"; // Your live backend
+const API_URL = "https://confessly-api.onrender.com";
 
-type Rarity = 'common' | 'uncommon' | 'rare' | 'legendary';
+export type Rarity = 'common' | 'uncommon' | 'rare' | 'legendary';
 
-interface User {
+export interface User {
   _id: string;
   username: string;
   gender: 'Male' | 'Female';
   anonymousName: { full: string; creatureRarity: Rarity; };
   level: number;
   xp: number;
+  totalPosts?: number;
+  streak?: number;
+  createdAt?: string;
 }
 
-interface Confession {
+export interface Confession {
   _id: string;
   authorName: string;
   authorRarity: Rarity;
   content: string;
   categories: string[];
+  likes?: number;
+  comments?: number;
   createdAt: Date | string;
 }
 
-const RARITY_COLORS: Record<Rarity, string> = {
-  common: '#9CA3AF', uncommon: '#60A5FA', rare: '#A855F7', legendary: '#FACC15'
+export const RARITY_COLORS: Record<Rarity, string> = {
+  common: '#9CA3AF', 
+  uncommon: '#60A5FA', 
+  rare: '#A855F7', 
+  legendary: '#FACC15'
+};
+
+export const RARITY_GLOW: Record<Rarity, string> = {
+  common: '',
+  uncommon: 'shadow-blue-500/20',
+  rare: 'shadow-purple-500/30',
+  legendary: 'animate-pulse-glow shadow-pink-500/40'
 };
 
 // ============================================
-// AUTH CONTEXT
+// AUTH CONTEXT (Improved with loading states)
 // ============================================
-const AuthContext = createContext<any>(undefined);
-export const useAuth = () => useContext(AuthContext);
+interface AuthContextType {
+  user: User | null;
+  token: string | null;
+  isAuthenticated: boolean;
+  isLoading: boolean;
+  login: (username: string, password: string) => Promise<void>;
+  signup: (username: string, password: string, gender: string) => Promise<void>;
+  logout: () => void;
+}
+
+const AuthContext = createContext<AuthContextType | undefined>(undefined);
+export const useAuth = () => {
+  const context = useContext(AuthContext);
+  if (!context) throw new Error('useAuth must be used within AuthProvider');
+  return context;
+};
 
 const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [user, setUser] = useState<User | null>(() => {
-    const saved = localStorage.getItem('confessly_user');
-    try { return saved ? JSON.parse(saved) : null; } catch { return null; }
-  });
-  const [token, setToken] = useState(localStorage.getItem('confessly_token'));
+  const [user, setUser] = useState<User | null>(null);
+  const [token, setToken] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
 
-  const login = async (u: string, p: string) => {
-    const res = await fetch(`${API_URL}/api/auth/login`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username: u, password: p })
-    });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || 'Login failed');
-    setUser(data.user);
-    setToken(data.token);
-    localStorage.setItem('confessly_token', data.token);
-    localStorage.setItem('confessly_user', JSON.stringify(data.user));
+  useEffect(() => {
+    // Load user from localStorage on mount
+    const savedUser = localStorage.getItem('confessly_user');
+    const savedToken = localStorage.getItem('confessly_token');
+    if (savedUser && savedToken) {
+      try {
+        setUser(JSON.parse(savedUser));
+        setToken(savedToken);
+      } catch (e) {
+        console.error('Failed to parse saved user');
+      }
+    }
+    setIsLoading(false);
+  }, []);
+
+  const login = async (username: string, password: string) => {
+    setIsLoading(true);
+    try {
+      const res = await fetch(`${API_URL}/api/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username, password })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Login failed');
+      
+      setUser(data.user);
+      setToken(data.token);
+      localStorage.setItem('confessly_token', data.token);
+      localStorage.setItem('confessly_user', JSON.stringify(data.user));
+    } finally {
+      setIsLoading(false);
+    }
   };
 
-  const signup = async (u: string, p: string, g: string) => {
-    const res = await fetch(`${API_URL}/api/auth/signup`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username: u, password: p, gender: g })
-    });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || 'Signup failed');
-    await login(u, p);
+  const signup = async (username: string, password: string, gender: string) => {
+    setIsLoading(true);
+    try {
+      const res = await fetch(`${API_URL}/api/auth/signup`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username, password, gender })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Signup failed');
+      await login(username, password);
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   const logout = () => {
@@ -76,170 +129,524 @@ const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => 
   };
 
   return (
-    <AuthContext.Provider value={{ user, token, isAuthenticated: !!user, login, signup, logout }}>
+    <AuthContext.Provider value={{ 
+      user, token, isAuthenticated: !!user, isLoading, login, signup, logout 
+    }}>
       {children}
     </AuthContext.Provider>
   );
 };
 
 // ============================================
-// UI COMPONENTS
+// LOADING SPINNER COMPONENT
 // ============================================
-const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
-  const { isAuthenticated } = useAuth();
-  return isAuthenticated ? <>{children}</> : <Navigate to="/login" replace />;
+const LoadingSpinner: React.FC = () => (
+  <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50">
+    <div className="flex flex-col items-center gap-4">
+      <div className="w-12 h-12 border-4 border-purple-500/30 border-t-purple-500 rounded-full animate-spin"></div>
+      <p className="text-purple-400 text-sm font-medium">Decrypting vault...</p>
+    </div>
+  </div>
+);
+
+// ============================================
+// PROTECTED ROUTE (With redirect)
+// ============================================
+const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const { isAuthenticated, isLoading } = useAuth();
+  const location = useLocation();
+
+  if (isLoading) return <LoadingSpinner />;
+  
+  if (!isAuthenticated) {
+    return <Navigate to="/login" state={{ from: location }} replace />;
+  }
+  
+  return <>{children}</>;
 };
 
-const ConfessionCard = ({ confession }: { confession: Confession }) => {
+// ============================================
+// CONFESSION CARD (Improved)
+// ============================================
+const ConfessionCard: React.FC<{ confession: Confession }> = ({ confession }) => {
   const [isRevealed, setIsRevealed] = useState(false);
   const rarityColor = RARITY_COLORS[confession.authorRarity] || '#9CA3AF';
+  const glowClass = RARITY_GLOW[confession.authorRarity] || '';
+  const formattedDate = new Date(confession.createdAt).toLocaleDateString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit'
+  });
 
   return (
-    <div className="bg-white/5 backdrop-blur-lg rounded-3xl border border-white/10 p-6 mb-6 transition-all hover:border-purple-500/50">
-      <div className="flex items-center space-x-3 mb-4">
-        <div className="w-10 h-10 rounded-full flex items-center justify-center font-bold text-black" style={{ backgroundColor: rarityColor }}>
-          {(confession.authorName || 'G').charAt(0)}
+    <div className={`glass rounded-2xl p-6 mb-5 transition-all duration-300 hover:scale-[1.01] hover:border-purple-500/50 ${glowClass}`}>
+      {/* Author Section */}
+      <div className="flex items-center justify-between mb-4">
+        <div className="flex items-center gap-3">
+          <div 
+            className="w-12 h-12 rounded-full flex items-center justify-center font-bold text-black text-lg shadow-lg"
+            style={{ backgroundColor: rarityColor }}
+          >
+            {(confession.authorName || '?').charAt(0).toUpperCase()}
+          </div>
+          <div>
+            <h3 className="text-white font-semibold text-base">
+              {confession.authorName || "Anonymous Soul"}
+            </h3>
+            <p className="text-[11px] text-gray-500 uppercase tracking-wider flex items-center gap-1">
+              <span className="w-1.5 h-1.5 rounded-full bg-purple-500"></span>
+              {confession.authorRarity.toUpperCase()} • {formattedDate}
+            </p>
+          </div>
         </div>
-        <div>
-          <h3 className="text-white font-semibold text-sm">{confession.authorName || "Anonymous Ghost"}</h3>
-          <p className="text-[10px] text-gray-500 uppercase tracking-widest">{confession.authorRarity}</p>
+        <div className="flex gap-2">
+          {confession.categories?.map(cat => (
+            <span key={cat} className="text-[10px] px-2 py-1 bg-white/5 rounded-full text-gray-400">
+              #{cat}
+            </span>
+          ))}
         </div>
       </div>
 
-      <div className={`mb-6 transition-all duration-700 ${isRevealed ? 'blur-0 opacity-100' : 'blur-xl opacity-10 select-none'}`}>
-        <p className="text-gray-200 leading-relaxed text-lg">{confession.content}</p>
+      {/* Content Section */}
+      <div className={`mb-5 transition-all duration-700 ${!isRevealed ? 'blur-xl opacity-20 select-none' : 'blur-0 opacity-100'}`}>
+        <p className="text-gray-200 leading-relaxed text-base">{confession.content}</p>
       </div>
 
-      {!isRevealed && (
-        <button onClick={() => setIsRevealed(true)} className="w-full py-3 bg-purple-600 rounded-2xl font-bold text-white text-xs tracking-widest hover:bg-purple-500 transition-all">
-          REVEAL SECRET
+      {/* Action Buttons */}
+      {!isRevealed ? (
+        <button
+          onClick={() => setIsRevealed(true)}
+          className="w-full py-3.5 bg-gradient-to-r from-purple-600 to-pink-600 rounded-xl font-bold text-white text-sm tracking-wider hover:opacity-90 transition-all shadow-lg shadow-purple-500/20"
+        >
+          🔓 REVEAL SECRET
         </button>
+      ) : (
+        <div className="flex items-center justify-between pt-2 border-t border-white/10">
+          <div className="flex gap-4">
+            <button className="flex items-center gap-1 text-gray-400 hover:text-pink-500 transition text-sm">
+              ❤️ {confession.likes || 0}
+            </button>
+            <button className="flex items-center gap-1 text-gray-400 hover:text-purple-500 transition text-sm">
+              💬 {confession.comments || 0}
+            </button>
+          </div>
+          <button className="text-gray-400 hover:text-white transition text-sm">
+            🔗 Share
+          </button>
+        </div>
       )}
     </div>
   );
 };
 
 // ============================================
-// PAGES
+// HOME PAGE (Feed)
 // ============================================
-const HomePage = () => {
+const HomePage: React.FC = () => {
   const [confessions, setConfessions] = useState<Confession[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const { user, logout } = useAuth();
 
   useEffect(() => {
-    fetch(`${API_URL}/api/confessions`)
-      .then(res => res.json())
-      .then(data => {
+    const fetchConfessions = async () => {
+      try {
+        const res = await fetch(`${API_URL}/api/confessions`);
+        if (!res.ok) throw new Error('Failed to fetch');
+        const data = await res.json();
         setConfessions(Array.isArray(data) ? data : []);
+      } catch (err) {
+        setError('Unable to load confessions. Please try again.');
+      } finally {
         setLoading(false);
-      })
-      .catch(() => setLoading(false));
+      }
+    };
+    fetchConfessions();
   }, []);
 
   return (
-    <div className="min-h-screen bg-[#050505] text-white">
-      <nav className="sticky top-0 z-50 bg-black/60 backdrop-blur-xl p-4 border-b border-white/5 flex justify-between items-center px-6">
-        <h1 className="text-2xl font-black tracking-tighter italic text-transparent bg-clip-text bg-gradient-to-r from-purple-400 to-pink-600">CONFESSLY</h1>
-        <div className="flex items-center space-x-4">
-          <Link to="/create" className="bg-white text-black px-5 py-2 rounded-full text-[10px] font-black uppercase tracking-widest hover:bg-purple-400 transition-all">Post</Link>
-          <Link to="/profile" className="w-10 h-10 rounded-full border border-white/10 flex items-center justify-center bg-white/5 text-purple-400 font-bold">P</Link>
+    <div className="min-h-screen bg-[#050505]">
+      {/* Navigation */}
+      <nav className="glass-nav sticky top-0 z-50 px-4 md:px-6 py-3 flex justify-between items-center">
+        <Link to="/" className="text-2xl md:text-3xl font-black tracking-tighter bg-gradient-to-r from-purple-400 to-pink-600 bg-clip-text text-transparent">
+          CONFESSLY
+        </Link>
+        <div className="flex items-center gap-3">
+          <Link 
+            to="/create" 
+            className="bg-gradient-to-r from-purple-600 to-pink-600 px-5 py-2 rounded-full text-xs font-bold uppercase tracking-wider hover:opacity-90 transition shadow-lg"
+          >
+            ✍️ Confess
+          </Link>
+          <div className="relative group">
+            <Link 
+              to="/profile" 
+              className="w-10 h-10 rounded-full border-2 border-purple-500/50 flex items-center justify-center bg-white/5 hover:bg-purple-500/20 transition"
+            >
+              <span className="text-purple-400 font-bold text-sm">
+                {user?.anonymousName?.full?.charAt(0) || user?.username?.charAt(0) || 'U'}
+              </span>
+            </Link>
+            <div className="absolute right-0 mt-2 w-48 bg-black/95 backdrop-blur-xl rounded-xl border border-white/10 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200">
+              <div className="py-2">
+                <div className="px-4 py-2 border-b border-white/10">
+                  <p className="text-sm font-semibold">{user?.username}</p>
+                  <p className="text-xs text-gray-500">Level {user?.level || 1}</p>
+                </div>
+                <button 
+                  onClick={logout}
+                  className="w-full text-left px-4 py-2 text-sm text-red-400 hover:bg-white/5 transition"
+                >
+                  🚪 Logout
+                </button>
+              </div>
+            </div>
+          </div>
         </div>
       </nav>
-      <main className="max-w-xl mx-auto p-6">
-        {loading ? <div className="text-center py-20 text-gray-600">Decrypting the vault...</div> : 
-         confessions.length === 0 ? <div className="text-center py-20 text-gray-600">The vault is empty. Be the first to confess.</div> :
-         confessions.map(c => <ConfessionCard key={c._id} confession={c} />)}
+
+      {/* Feed Content */}
+      <main className="max-w-2xl mx-auto px-4 py-6 pb-20">
+        {loading ? (
+          <div className="flex flex-col items-center justify-center py-20">
+            <div className="w-10 h-10 border-4 border-purple-500/30 border-t-purple-500 rounded-full animate-spin"></div>
+            <p className="text-gray-500 mt-4 text-sm">Decrypting the vault...</p>
+          </div>
+        ) : error ? (
+          <div className="text-center py-20">
+            <p className="text-red-400">{error}</p>
+            <button 
+              onClick={() => window.location.reload()}
+              className="mt-4 px-6 py-2 bg-purple-600 rounded-lg text-sm"
+            >
+              Retry
+            </button>
+          </div>
+        ) : confessions.length === 0 ? (
+          <div className="text-center py-20">
+            <div className="text-6xl mb-4">🔮</div>
+            <p className="text-gray-500 text-lg">The vault is empty...</p>
+            <p className="text-gray-600 text-sm mt-2">Be the first to share a secret</p>
+            <Link 
+              to="/create"
+              className="inline-block mt-6 px-6 py-3 bg-purple-600 rounded-xl font-semibold hover:bg-purple-700 transition"
+            >
+              Create Your First Confession
+            </Link>
+          </div>
+        ) : (
+          confessions.map(c => <ConfessionCard key={c._id} confession={c} />)
+        )}
       </main>
     </div>
   );
 };
 
-const CreatePage = () => {
+// ============================================
+// CREATE PAGE
+// ============================================
+const CreatePage: React.FC = () => {
   const [content, setContent] = useState('');
+  const [loading, setLoading] = useState(false);
   const { user } = useAuth();
   const nav = useNavigate();
 
   const handlePost = async () => {
-    if (!content.trim()) return;
+    if (!content.trim()) {
+      alert('Please write something before posting');
+      return;
+    }
+    if (content.length < 10) {
+      alert('Your confession must be at least 10 characters');
+      return;
+    }
+    
+    setLoading(true);
     try {
       const res = await fetch(`${API_URL}/api/confessions`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ content, userId: user._id, categories: ['General'] })
+        body: JSON.stringify({ 
+          content: content.trim(), 
+          userId: user?._id, 
+          categories: ['General'] 
+        })
       });
-      if (res.ok) nav('/');
-    } catch (err) { alert("Server busy. Try again."); }
+      
+      if (res.ok) {
+        nav('/');
+      } else {
+        const data = await res.json();
+        alert(data.error || 'Failed to post. Please try again.');
+      }
+    } catch (err) {
+      alert('Network error. Please check your connection.');
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
-    <div className="min-h-screen bg-black p-6 flex flex-col items-center">
-      <div className="w-full max-w-xl">
-        <div className="flex justify-between items-center mb-10">
-          <Link to="/" className="text-gray-500 text-sm">← Back</Link>
-          <h2 className="text-xl font-bold">New Confession</h2>
-          <button onClick={handlePost} className="text-purple-400 font-bold uppercase text-xs tracking-widest">Post</button>
+    <div className="min-h-screen bg-[#050505] p-4 md:p-6">
+      <div className="max-w-2xl mx-auto">
+        <div className="flex items-center justify-between mb-8">
+          <Link to="/" className="text-gray-400 hover:text-white transition flex items-center gap-2">
+            ← Back
+          </Link>
+          <h1 className="text-xl font-bold bg-gradient-to-r from-purple-400 to-pink-600 bg-clip-text text-transparent">
+            New Confession
+          </h1>
+          <button 
+            onClick={handlePost}
+            disabled={loading || !content.trim()}
+            className="px-5 py-2 bg-gradient-to-r from-purple-600 to-pink-600 rounded-full text-sm font-bold disabled:opacity-50 disabled:cursor-not-allowed hover:opacity-90 transition"
+          >
+            {loading ? 'Posting...' : 'Post'}
+          </button>
         </div>
-        <textarea 
-          className="w-full bg-white/5 border border-white/10 rounded-3xl p-8 text-xl text-white outline-none focus:border-purple-500/50 min-h-[300px]"
-          placeholder="What's on your mind? (Fully Anonymous)"
-          value={content}
-          onChange={(e) => setContent(e.target.value)}
-        />
+        
+        <div className="glass rounded-2xl p-6">
+          <textarea
+            className="w-full bg-transparent border-0 text-white text-lg outline-none resize-none min-h-[300px] placeholder:text-gray-600"
+            placeholder="What's on your mind? 👻\n\nYour secret is safe here. Confessions are completely anonymous."
+            value={content}
+            onChange={(e) => setContent(e.target.value)}
+            maxLength={1000}
+            autoFocus
+          />
+          <div className="border-t border-white/10 pt-4 flex justify-between items-center text-sm text-gray-500">
+            <span>{content.length}/1000 characters</span>
+            <span>🔒 Anonymous & Encrypted</span>
+          </div>
+        </div>
       </div>
     </div>
   );
 };
 
-const LoginPage = () => {
-  const [u, setU] = useState('');
-  const [p, setP] = useState('');
+// ============================================
+// LOGIN PAGE
+// ============================================
+const LoginPage: React.FC = () => {
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
   const { login } = useAuth();
   const nav = useNavigate();
+  const location = useLocation();
+  const from = (location.state as any)?.from?.pathname || '/';
 
-  const handle = async (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    try { await login(u, p); nav('/'); } catch (err: any) { alert(err.message); }
+    setError('');
+    setLoading(true);
+    try {
+      await login(username, password);
+      nav(from, { replace: true });
+    } catch (err: any) {
+      setError(err.message || 'Invalid username or password');
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
     <div className="min-h-screen bg-[#050505] flex items-center justify-center p-6">
-      <form onSubmit={handle} className="bg-white/5 backdrop-blur-2xl p-10 rounded-[40px] border border-white/10 w-full max-w-sm shadow-2xl">
-        <h2 className="text-4xl font-black text-center mb-2 text-white tracking-tighter">Enter Vault</h2>
-        <p className="text-gray-500 text-center mb-10 text-[10px] uppercase tracking-[0.3em]">Accessing Private Sector</p>
-        <input className="w-full bg-white/5 border border-white/10 p-5 rounded-2xl mb-4 text-white outline-none focus:border-purple-500 transition-all" placeholder="Username" value={u} onChange={e => setU(e.target.value)} required />
-        <input className="w-full bg-white/5 border border-white/10 p-5 rounded-2xl mb-10 text-white outline-none focus:border-purple-500 transition-all" type="password" placeholder="Password" value={p} onChange={e => setP(e.target.value)} required />
-        <button className="w-full py-5 bg-purple-600 rounded-2xl font-black text-sm uppercase tracking-widest shadow-lg shadow-purple-900/40 hover:bg-purple-500 transition-all">Open Session</button>
-        <p className="text-center text-gray-500 text-[10px] mt-8 uppercase tracking-widest">New Shadow? <Link to="/signup" className="text-purple-400">Initialize</Link></p>
+      <form onSubmit={handleSubmit} className="glass rounded-[40px] p-8 md:p-10 w-full max-w-md border border-white/10">
+        <div className="text-center mb-8">
+          <h1 className="text-5xl font-black bg-gradient-to-r from-purple-400 to-pink-600 bg-clip-text text-transparent">
+            CONFESSLY
+          </h1>
+          <p className="text-gray-500 text-sm mt-2 tracking-wider">ENTER THE VAULT</p>
+        </div>
+        
+        {error && (
+          <div className="mb-4 p-3 bg-red-500/10 border border-red-500/20 rounded-xl text-red-400 text-sm text-center">
+            {error}
+          </div>
+        )}
+        
+        <input
+          className="w-full bg-white/5 border border-white/10 rounded-xl p-4 mb-4 text-white outline-none focus:border-purple-500 transition"
+          placeholder="Username"
+          value={username}
+          onChange={(e) => setUsername(e.target.value)}
+          required
+          disabled={loading}
+        />
+        <input
+          className="w-full bg-white/5 border border-white/10 rounded-xl p-4 mb-6 text-white outline-none focus:border-purple-500 transition"
+          type="password"
+          placeholder="Password"
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          required
+          disabled={loading}
+        />
+        <button
+          type="submit"
+          disabled={loading}
+          className="w-full py-4 bg-gradient-to-r from-purple-600 to-pink-600 rounded-xl font-bold text-white hover:opacity-90 transition disabled:opacity-50"
+        >
+          {loading ? 'Opening vault...' : 'Open Session'}
+        </button>
+        
+        <p className="text-center text-gray-500 text-sm mt-6">
+          New here?{' '}
+          <Link to="/signup" className="text-purple-400 hover:text-purple-300 transition">
+            Initialize Identity
+          </Link>
+        </p>
       </form>
     </div>
   );
 };
 
-const SignupPage = () => {
-  const [form, setForm] = useState({ u: '', p: '', g: 'Male' });
+// ============================================
+// SIGNUP PAGE
+// ============================================
+const SignupPage: React.FC = () => {
+  const [form, setForm] = useState({ username: '', password: '', gender: 'Male' });
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
   const { signup } = useAuth();
   const nav = useNavigate();
 
-  const handle = async (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    try { await signup(form.u, form.p, form.g); nav('/'); } catch (err: any) { alert(err.message); }
+    setError('');
+    
+    if (form.username.length < 3) {
+      setError('Username must be at least 3 characters');
+      return;
+    }
+    if (form.password.length < 6) {
+      setError('Password must be at least 6 characters');
+      return;
+    }
+    
+    setLoading(true);
+    try {
+      await signup(form.username, form.password, form.gender);
+      nav('/');
+    } catch (err: any) {
+      setError(err.message || 'Signup failed. Username may already exist.');
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
     <div className="min-h-screen bg-[#050505] flex items-center justify-center p-6">
-      <form onSubmit={handle} className="bg-white/5 backdrop-blur-2xl p-10 rounded-[40px] border border-white/10 w-full max-w-sm shadow-2xl">
-        <h2 className="text-4xl font-black text-center mb-2 text-white tracking-tighter">Initialize</h2>
-        <p className="text-gray-500 text-center mb-10 text-[10px] uppercase tracking-[0.3em]">Identity Creation</p>
-        <input className="w-full bg-white/5 border border-white/10 p-5 rounded-2xl mb-4 text-white outline-none focus:border-purple-500 transition-all" placeholder="Username" onChange={e => setForm({...form, u: e.target.value})} required />
-        <input className="w-full bg-white/5 border border-white/10 p-5 rounded-2xl mb-8 text-white outline-none focus:border-purple-500 transition-all" type="password" placeholder="Password" onChange={e => setForm({...form, p: e.target.value})} required />
-        <div className="flex gap-3 mb-10">
+      <form onSubmit={handleSubmit} className="glass rounded-[40px] p-8 md:p-10 w-full max-w-md border border-white/10">
+        <div className="text-center mb-8">
+          <h1 className="text-4xl font-black bg-gradient-to-r from-purple-400 to-pink-600 bg-clip-text text-transparent">
+            Initialize
+          </h1>
+          <p className="text-gray-500 text-sm mt-2">CREATE YOUR SHADOW IDENTITY</p>
+        </div>
+        
+        {error && (
+          <div className="mb-4 p-3 bg-red-500/10 border border-red-500/20 rounded-xl text-red-400 text-sm text-center">
+            {error}
+          </div>
+        )}
+        
+        <input
+          className="w-full bg-white/5 border border-white/10 rounded-xl p-4 mb-4 text-white outline-none focus:border-purple-500 transition"
+          placeholder="Username"
+          onChange={(e) => setForm({ ...form, username: e.target.value })}
+          required
+          disabled={loading}
+        />
+        <input
+          className="w-full bg-white/5 border border-white/10 rounded-xl p-4 mb-4 text-white outline-none focus:border-purple-500 transition"
+          type="password"
+          placeholder="Password (min. 6 characters)"
+          onChange={(e) => setForm({ ...form, password: e.target.value })}
+          required
+          disabled={loading}
+        />
+        
+        <div className="flex gap-3 mb-6">
           {['Male', 'Female'].map(g => (
-            <button key={g} type="button" onClick={() => setForm({...form, g})} className={`flex-1 py-4 rounded-2xl font-black text-[10px] uppercase tracking-widest transition-all ${form.g === g ? 'bg-white text-black' : 'bg-white/5 text-gray-500'}`}>{g}</button>
+            <button
+              key={g}
+              type="button"
+              onClick={() => setForm({ ...form, gender: g })}
+              className={`flex-1 py-3 rounded-xl font-semibold transition ${
+                form.gender === g 
+                  ? 'bg-gradient-to-r from-purple-600 to-pink-600 text-white' 
+                  : 'bg-white/5 text-gray-500 hover:bg-white/10'
+              }`}
+              disabled={loading}
+            >
+              {g === 'Male' ? '♂️' : '♀️'} {g}
+            </button>
           ))}
         </div>
-        <button className="w-full py-5 bg-gradient-to-r from-purple-600 to-pink-600 rounded-2xl font-black text-sm uppercase tracking-widest shadow-lg shadow-purple-900/40">Generate Vessel</button>
-        <p className="text-center text-gray-500 text-[10px] mt-8 uppercase tracking-widest">In the database? <Link to="/login" className="text-purple-400">Enter Vault</Link></p>
+        
+        <button
+          type="submit"
+          disabled={loading}
+          className="w-full py-4 bg-gradient-to-r from-purple-600 to-pink-600 rounded-xl font-bold text-white hover:opacity-90 transition disabled:opacity-50"
+        >
+          {loading ? 'Creating identity...' : 'Generate Vessel'}
+        </button>
+        
+        <p className="text-center text-gray-500 text-sm mt-6">
+          Already have an account?{' '}
+          <Link to="/login" className="text-purple-400 hover:text-purple-300 transition">
+            Enter Vault
+          </Link>
+        </p>
       </form>
+    </div>
+  );
+};
+
+// ============================================
+// PROFILE PAGE (Placeholder - Ready for expansion)
+// ============================================
+const ProfilePage: React.FC = () => {
+  const { user } = useAuth();
+  
+  return (
+    <div className="min-h-screen bg-[#050505] p-6">
+      <div className="max-w-2xl mx-auto">
+        <Link to="/" className="text-gray-400 hover:text-white transition inline-flex items-center gap-2 mb-6">
+          ← Back
+        </Link>
+        
+        <div className="glass rounded-2xl p-8 text-center">
+          <div className="w-24 h-24 mx-auto rounded-full bg-gradient-to-r from-purple-600 to-pink-600 flex items-center justify-center mb-4">
+            <span className="text-4xl font-bold text-white">
+              {user?.anonymousName?.full?.charAt(0) || user?.username?.charAt(0) || 'U'}
+            </span>
+          </div>
+          <h2 className="text-2xl font-bold">{user?.username}</h2>
+          <p className="text-gray-400 mt-1">{user?.anonymousName?.full}</p>
+          <div className="mt-2 inline-block px-3 py-1 bg-purple-500/20 rounded-full text-sm text-purple-400">
+            {user?.anonymousName?.creatureRarity?.toUpperCase() || 'COMMON'} RARITY
+          </div>
+          
+          <div className="grid grid-cols-2 gap-4 mt-6 pt-6 border-t border-white/10">
+            <div>
+              <p className="text-2xl font-bold">{user?.level || 1}</p>
+              <p className="text-xs text-gray-500">LEVEL</p>
+            </div>
+            <div>
+              <p className="text-2xl font-bold">{user?.xp || 0}</p>
+              <p className="text-xs text-gray-500">XP</p>
+            </div>
+          </div>
+          
+          <p className="text-sm text-gray-500 mt-6">Coming soon: Your confession history, badges, and more!</p>
+        </div>
+      </div>
     </div>
   );
 };
@@ -256,7 +663,7 @@ export default function App() {
           <Route path="/signup" element={<SignupPage />} />
           <Route path="/" element={<ProtectedRoute><HomePage /></ProtectedRoute>} />
           <Route path="/create" element={<ProtectedRoute><CreatePage /></ProtectedRoute>} />
-          <Route path="/profile" element={<ProtectedRoute><div className="p-20 text-center">Profile Under Construction</div></ProtectedRoute>} />
+          <Route path="/profile" element={<ProtectedRoute><ProfilePage /></ProtectedRoute>} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </BrowserRouter>
