@@ -26,8 +26,6 @@ import {
   BrowserRouter, Routes, Route, Link, Navigate,
   useNavigate, useLocation,
 } from "react-router-dom";
-// Add this near your constants if it's missing
-const var_ = (name) => `var(${name})`;
 
 // ─────────────────────────────────────────────────────────────────
 // §1  CONFIG & CONSTANTS
@@ -352,10 +350,10 @@ function AuthProvider({ children }) {
     } finally { setIsLoading(false); }
   };
 
-  const signup = async (username, password, gender) => {
+  const signup = async (username, password, gender, previewIdentity = null) => {
     setIsLoading(true);
     try {
-      const anonymousName = generateAnonymousName();
+      const anonymousName = previewIdentity || generateAnonymousName();
       let newUser;
       try {
         const res = await fetch(`${API_URL}/api/auth/signup`, {
@@ -365,14 +363,31 @@ function AuthProvider({ children }) {
           signal: AbortSignal.timeout(5000),
         });
         const data = await res.json();
-        if (!res.ok) throw new Error(data.error || "Signup failed");
+        if (!res.ok) {
+          if (res.status === 409 || data.error?.includes("duplicate") || data.error?.includes("taken")) {
+            throw new Error("Identity already taken");
+          }
+          throw new Error(data.error || "Signup failed");
+        }
         newUser = data.user;
         _saveUser(newUser, data.token);
         return;
-      } catch {}
+      } catch (err) {
+        if (err.message === "Identity already taken") throw err;
+      }
       // Mock signup
       if (localStorage.getItem(`wv_mock_user_${username}`)) {
         throw new Error("Username already taken");
+      }
+      // Check if identity already exists in mock storage
+      const existingMockUser = Object.keys(localStorage)
+        .filter(key => key.startsWith("wv_mock_user_"))
+        .some(key => {
+          const user = JSON.parse(localStorage.getItem(key));
+          return user.anonymousName?.full === anonymousName.full;
+        });
+      if (existingMockUser) {
+        throw new Error("Identity already taken");
       }
       newUser = {
         _id:`mock_${Date.now()}`, username, gender, anonymousName,
@@ -1400,13 +1415,14 @@ function generateMockComments(confId) {
 // ─────────────────────────────────────────────────────────────────
 function NotificationPanel({ notifications, onMarkRead, onClose }) {
   const unread = notifications.filter(n => !n.read).length;
+  // Use the same var_ helper defined at the top (no duplicate)
   return (
     <div style={{
       position:"absolute", top:"calc(100% + 8px)", right:0,
       width:320, maxHeight:420, overflowY:"auto",
       background:"rgba(10,10,18,0.97)",
       border:"1px solid var(--border)",
-      borderRadius:var_("--radius-lg"), zIndex:200,
+      borderRadius:"var(--radius-lg)", zIndex:200,
       backdropFilter:"blur(24px)",
       boxShadow:"0 20px 60px rgba(0,0,0,0.6)",
     }}>
@@ -1438,8 +1454,6 @@ function NotificationPanel({ notifications, onMarkRead, onClose }) {
     </div>
   );
 }
-
-function var_(name) { return `var(${name})`; }
 
 // ─────────────────────────────────────────────────────────────────
 // §15  NAVIGATION BAR
@@ -2648,9 +2662,18 @@ function SignupPage() {
     if (username.length < 3) { setError("Username must be at least 3 characters"); return; }
     if (password.length < 6) { setError("Password must be at least 6 characters"); return; }
     setLoading(true);
-    try { await signup(username, password, gender); nav("/"); }
-    catch (err) { setError(err.message || "Signup failed"); }
-    finally { setLoading(false); }
+    try {
+      await signup(username, password, gender, preview);
+      nav("/");
+    } catch (err) {
+      if (err.message.includes("taken") || err.message.includes("duplicate") || err.message.includes("already exists")) {
+        const newIdentity = generateAnonymousName();
+        setPreview(newIdentity);
+        setError(`Identity "${preview?.full}" was already claimed. New identity assigned: "${newIdentity.full}"`);
+      } else {
+        setError(err.message || "Signup failed");
+      }
+    } finally { setLoading(false); }
   };
 
   const rarityColor = preview ? (RARITY_COLORS[preview.creatureRarity] || "#a855f7") : "#a855f7";

@@ -1,13 +1,14 @@
 // ============================================
 // CREDENTIALS & DEPENDENCIES
 // ============================================
+
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 const http = require('http');
-const path = require('path'); 
+const path = require('path');
 const { Server } = require('socket.io');
 const cloudinary = require('cloudinary').v2;
 const { OpenAI } = require('openai');
@@ -43,7 +44,7 @@ const PORT = process.env.PORT || CRED.SERVER.PORT;
 // ============================================
 // MIDDLEWARE (CORS FIX)
 // ============================================
-app.use(cors({ 
+app.use(cors({
     origin: true,
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
@@ -53,10 +54,10 @@ app.use(express.json());
 
 // Services Initialization
 if (CRED.CLOUDINARY.CLOUD_NAME) {
-    cloudinary.config({ 
-        cloud_name: CRED.CLOUDINARY.CLOUD_NAME, 
-        api_key: CRED.CLOUDINARY.API_KEY, 
-        api_secret: CRED.CLOUDINARY.API_SECRET 
+    cloudinary.config({
+        cloud_name: CRED.CLOUDINARY.CLOUD_NAME,
+        api_key: CRED.CLOUDINARY.API_KEY,
+        api_secret: CRED.CLOUDINARY.API_SECRET
     });
 }
 
@@ -65,11 +66,17 @@ const openai = CRED.OPENAI.API_KEY ? new OpenAI({ apiKey: CRED.OPENAI.API_KEY })
 // ============================================
 // DATABASE MODELS
 // ============================================
+
 const UserSchema = new mongoose.Schema({
-    username: { type: String, required: true, unique: true },
+    username: {
+        type: String,
+        required: true,
+        unique: true,   // 🚨 CRITICAL: ensures no two users share the same username
+        trim: true
+    },
     password: { type: String, required: true },
     gender: { type: String, enum: ['Male', 'Female'] },
-    anonymousName: { 
+    anonymousName: {
         full: { type: String, default: 'Anonymous' },
         creatureRarity: { type: String, default: 'common' }
     },
@@ -94,11 +101,12 @@ const Confession = mongoose.models.Confession || mongoose.model('Confession', Co
 // ============================================
 // SOCKET.IO
 // ============================================
-const io = new Server(server, { 
-    cors: { 
+
+const io = new Server(server, {
+    cors: {
         origin: "*",
         methods: ["GET", "POST"]
-    } 
+    }
 });
 
 io.on('connection', (socket) => {
@@ -114,8 +122,8 @@ io.on('connection', (socket) => {
 
 // 1. Health Check
 app.get('/api/health', (req, res) => {
-    res.json({ 
-        status: 'online', 
+    res.json({
+        status: 'online',
         database: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected',
         timestamp: new Date().toISOString()
     });
@@ -124,10 +132,10 @@ app.get('/api/health', (req, res) => {
 // 2. Auth: Signup
 app.post('/api/auth/signup', async (req, res) => {
     console.log("📝 Signup request:", { username: req.body.username, gender: req.body.gender });
-    
+
     try {
         const { username, password, gender } = req.body;
-        
+
         // Validation
         if (!username || username.length < 3) {
             return res.status(400).json({ error: "Username must be at least 3 characters" });
@@ -135,33 +143,33 @@ app.post('/api/auth/signup', async (req, res) => {
         if (!password || password.length < 6) {
             return res.status(400).json({ error: "Password must be at least 6 characters" });
         }
-        
+
         const hashed = await bcrypt.hash(password, 12);
-        
+
         // Generate anonymous name
         const prefixes = ['Ghost', 'Shadow', 'Phantom', 'Mystic', 'Void', 'Silent', 'Whisper', 'Dark', 'Echo'];
         const suffixes = ['Soul', 'Spirit', 'Walker', 'Seeker', 'Wanderer', 'Watcher', 'Guardian', 'Hunter'];
         const randomPrefix = prefixes[Math.floor(Math.random() * prefixes.length)];
         const randomSuffix = suffixes[Math.floor(Math.random() * suffixes.length)];
         const randomNum = Math.floor(Math.random() * 9999);
-        
-        const newUser = new User({ 
-            username, 
-            password: hashed, 
+
+        const newUser = new User({
+            username,
+            password: hashed,
             gender,
-            anonymousName: { 
-                full: `${randomPrefix} ${randomSuffix} ${randomNum}`, 
-                creatureRarity: 'common' 
+            anonymousName: {
+                full: `${randomPrefix} ${randomSuffix} ${randomNum}`,
+                creatureRarity: 'common'
             }
         });
-        
+
         await newUser.save();
         const token = jwt.sign({ id: newUser._id }, CRED.JWT.SECRET, { expiresIn: '7d' });
-        
+
         console.log("✅ User created:", username);
         res.status(201).json({ user: newUser, token });
-        
-    } catch (err) { 
+
+    } catch (err) {
         console.error("❌ Signup error:", err.message);
         if (err.code === 11000) {
             res.status(400).json({ error: "Username already exists" });
@@ -174,70 +182,70 @@ app.post('/api/auth/signup', async (req, res) => {
 // 3. Auth: Login
 app.post('/api/auth/login', async (req, res) => {
     console.log("🔐 Login request:", req.body.username);
-    
+
     try {
         const { username, password } = req.body;
-        
+
         if (!username || !password) {
             return res.status(400).json({ error: "Username and password required" });
         }
-        
+
         const user = await User.findOne({ username });
         if (!user) {
             console.log("❌ User not found:", username);
             return res.status(401).json({ error: "Invalid credentials" });
         }
-        
+
         const isValid = await bcrypt.compare(password, user.password);
         if (!isValid) {
             console.log("❌ Invalid password for:", username);
             return res.status(401).json({ error: "Invalid credentials" });
         }
-        
+
         const token = jwt.sign({ id: user._id }, CRED.JWT.SECRET, { expiresIn: '7d' });
         console.log("✅ Login successful:", username);
         res.json({ user, token });
-        
+
     } catch (err) {
         console.error("❌ Login error:", err.message);
         res.status(500).json({ error: "Login error" });
     }
 });
 
-// 4. Confessions: Post (FIXED)
+// 4. Confessions: Post
 app.post('/api/confessions', async (req, res) => {
     console.log("📝 POST /api/confessions - Request received");
     console.log("Body:", JSON.stringify(req.body, null, 2));
-    
+
     try {
         const { content, categories, userId } = req.body;
-        
+
         // Validation
         if (!content) {
             console.log("❌ Missing content");
             return res.status(400).json({ error: "Content is required" });
         }
-        
+
         if (!userId) {
             console.log("❌ Missing userId");
             return res.status(400).json({ error: "User ID is required. Please log in again." });
         }
-        
+
         if (content.length < 5) {
             return res.status(400).json({ error: "Content must be at least 5 characters" });
         }
-        
+
         console.log(`Looking for user with ID: ${userId}`);
-        
+
         // Find user
         const user = await User.findById(userId);
         if (!user) {
             console.log("❌ User not found:", userId);
             return res.status(404).json({ error: "User not found. Please log in again." });
         }
-        
+
         console.log(`✅ User found: ${user.username} (Level ${user.level})`);
-        
+
         // Optional moderation
         if (CRED.FEATURES.ENABLE_MODERATION && openai) {
             try {
@@ -252,7 +260,7 @@ app.post('/api/confessions', async (req, res) => {
                 console.warn("⚠️ Moderation skipped:", modErr.message);
             }
         }
-        
+
         // Create confession
         const newPost = new Confession({
             authorName: user.anonymousName.full,
@@ -260,60 +268,60 @@ app.post('/api/confessions', async (req, res) => {
             content: content,
             categories: categories && categories.length > 0 ? categories : ['General']
         });
-        
+
         console.log("💾 Saving confession...");
         await newPost.save();
         console.log(`✅ Confession saved with ID: ${newPost._id}`);
-        
+
         // Update XP
         const oldLevel = user.level;
         user.xp = (user.xp || 0) + 20;
-        
+
         while (user.xp >= 100) {
             user.level += 1;
             user.xp -= 100;
         }
-        
+
         if (user.level > oldLevel) {
             console.log(`🎉 User ${user.username} leveled up from ${oldLevel} to ${user.level}!`);
         }
-        
+
         await user.save();
-        
+
         // Emit via Socket.IO
         io.emit('new_confession', newPost);
-        
+
         // Return success response
-        res.json({ 
+        res.json({
             success: true,
-            post: newPost, 
+            post: newPost,
             user: {
                 _id: user._id,
                 username: user.username,
                 level: user.level,
                 xp: user.xp
-            } 
+            }
         });
-        
-    } catch (err) { 
+
+    } catch (err) {
         console.error("❌ Post confession error:", err.message);
         console.error("Error stack:", err.stack);
-        res.status(500).json({ error: err.message || "Failed to post confession" }); 
+        res.status(500).json({ error: err.message || "Failed to post confession" });
     }
 });
 
 // 5. Confessions: Get Feed
 app.get('/api/confessions', async (req, res) => {
     console.log("📋 GET /api/confessions - Fetching feed");
-    
+
     try {
         const list = await Confession.find()
             .sort({ createdAt: -1 })
             .limit(50);
-        
+
         console.log(`✅ Returning ${list.length} confessions`);
         res.json(list);
-        
+
     } catch (err) {
         console.error("❌ Fetch feed error:", err.message);
         res.status(500).json({ error: "Failed to fetch feed" });
@@ -336,6 +344,7 @@ app.get('/api/user/:id', async (req, res) => {
 // ============================================
 // LAUNCH
 // ============================================
+
 if (!CRED.DATABASE.MONGODB_URI) {
     console.error("❌ ERROR: MONGODB_URI is missing!");
     process.exit(1);
