@@ -36,10 +36,14 @@ def deploy():
     
     # Step 1: Validate Credentials
     print("\n🔐 Step 1: Validating Master Credentials...")
-    # Using absolute path check for node
-    if not run_ps_command("node credentials/master-credentials.js"):
-        print("🛑 Credential validation failed. Ensure you are in the root folder.")
+    # Use the absolute path we found earlier
+    master_cred_path = r"R:\123456\confessly\credentials\master-credentials.js"
+    
+    if not run_ps_command(f"node '{master_cred_path}'"):
+        print(f"🛑 Credential validation failed. File not found at: {master_cred_path}")
         sys.exit(1)
+    
+    print("✅ Credentials validated successfully!")
 
     # Step 2: Backend Deployment (Render via Git)
     print("\n📡 Step 2: Pushing Backend Updates to GitHub...")
@@ -50,7 +54,9 @@ def deploy():
         "git push origin main"
     ]
     for cmd in git_cmds:
-        run_ps_command(cmd)
+        if not run_ps_command(cmd):
+            print(f"❌ Git command failed: {cmd}")
+            sys.exit(1)
 
     # Step 3: Frontend Deployment (Vercel)
     print("\n🎨 Step 3: Deploying Frontend to Vercel...")

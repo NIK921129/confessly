@@ -1,3 +1,6 @@
+// ============================================
+// CREDENTIALS LOADING (LOCAL R-DRIVE + CLOUD SAFE)
+// ============================================
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
@@ -11,17 +14,19 @@ const { OpenAI } = require('openai');
 const fs = require('fs');
 require('dotenv').config();
 
-// ============================================
-// CREDENTIALS LOADING (DYNAMIC & DRIVE SAFE)
-// ============================================
-const localCredentialsPath = path.join(__dirname, '../../credentials/master-credentials.js');
+// Since server.js is in R:\confessly\backend, 
+// we go up ONE level to R:\confessly, then into credentials.
+const localCredentialsPath = path.join(__dirname, '../credentials/master-credentials.js');
+
 let CRED;
 
 if (fs.existsSync(localCredentialsPath)) {
     CRED = require(localCredentialsPath);
-    console.log("🔐 LOCAL: Credentials loaded from R:\\confessly\\credentials");
+    console.log("🔐 LOCAL: Credentials loaded successfully from:", localCredentialsPath);
+    console.log("✅ Using local credentials from R-Drive");
 } else {
     console.log("☁️  CLOUD: Falling back to Environment Variables");
+    // Fallback to environment variables
     CRED = {
         DATABASE: { MONGODB_URI: process.env.MONGODB_URI },
         JWT: { SECRET: process.env.JWT_SECRET },
@@ -35,6 +40,7 @@ if (fs.existsSync(localCredentialsPath)) {
         OPENAI: { API_KEY: process.env.OPENAI_API_KEY },
         FEATURES: { ENABLE_MODERATION: true }
     };
+    console.log("✅ Using environment variables for credentials");
 }
 
 const app = express();
